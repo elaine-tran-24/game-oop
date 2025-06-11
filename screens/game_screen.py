@@ -2,6 +2,9 @@
 Game Screen for When Cows Fly
 Main gameplay screen with cow, obstacles, and game logic
 """
+GRAVITY = 200
+JUMP_STRENGTH = 100
+GROUND_LEVEL = 60
 
 import random
 from kivy.uix.screenmanager import Screen
@@ -20,115 +23,193 @@ class Cow(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.velocity_y = 0
-        self.gravity = -800
-        self.jump_strength = 400
+        self.gravity = GRAVITY
+        self.jump_strength = JUMP_STRENGTH
+        self.size_hint = (None, None)
         self.size = (40, 40)
-        self.ground_level = 60
+        self.ground_level = GROUND_LEVEL
+        self.is_falling = False
+        self.fall_reason = None
+        self.game_started = False
         
-        # Draw the cow (simple representation)
+        self.pos = (100, self.ground_level)
+        
         with self.canvas:
-            Color(1, 1, 1, 1)  # White cow
+            Color(1, 1, 1, 1)
             self.cow_shape = Ellipse(pos=self.pos, size=self.size)
         
         self.bind(pos=self.update_graphics)
     
     def update_graphics(self, *args):
-        """Update cow graphics position"""
         self.cow_shape.pos = self.pos
     
     def update(self, dt):
-        """Update cow physics"""
+        """Update cow physics. Flappy Bird style, but stops on the ground."""
+        if not self.game_started:
+            return
+
         # Apply gravity
-        self.velocity_y += self.gravity * dt
-        
-        # Update position
+        self.velocity_y -= self.gravity * dt
         self.y += self.velocity_y * dt
-        
-        # Ground collision
+
+        # If we are already falling into a hole, let the cow fall off-screen
+        if self.is_falling and self.fall_reason == 'hole':
+            # Check if cow is completely off-screen
+            if self.top < 0:
+                if self.parent: # Check if part of a screen
+                    self.parent.lose_life()
+                # No need to reset here, lose_life() will handle it.
+            return # Skip ground collision logic
+
+        # If NOT falling into a hole, check for ground collision
         if self.y <= self.ground_level:
             self.y = self.ground_level
             self.velocity_y = 0
-        
-        # Ceiling collision
-        if self.y >= Window.height - self.height - 10:
-            self.y = Window.height - self.height - 10
-            self.velocity_y = 0
-    
-    def jump(self):
-        """Make the cow jump"""
-        self.velocity_y = self.jump_strength
 
+            # **FIXED: ADDED HOLE CHECK LOGIC HERE**
+            # Check if we are on the ground and over a hole
+            if self.parent and self.parent.is_cow_in_hole(self):
+                self.start_falling(reason='hole')
+
+
+    def jump(self):
+        """Make the cow jump (like Flappy Bird)"""
+        if not self.game_started:
+            self.game_started = True
+            
+        # Only jump if not falling
+        if not self.is_falling:
+            self.velocity_y = self.jump_strength
+    
+    def start_falling(self, reason='hit'):
+        self.is_falling = True
+        self.fall_reason = reason
+        # For 'hit' reason, we don't need special physics,
+        # the gravity will take over. The lose_life() will reset the cow.
+        if reason == 'hole':
+             # Give a slight downward push to ensure it falls
+            self.velocity_y = -50
+    
+    def reset_to_ground(self):
+        self.y = self.ground_level
+        self.velocity_y = 0
+        self.is_falling = False
+        self.fall_reason = None
 class Obstacle(Widget):
     """Base obstacle class"""
-    
+
     def __init__(self, obstacle_type, **kwargs):
         super().__init__(**kwargs)
         self.obstacle_type = obstacle_type
         self.speed = 200
+        self.size_hint = (None, None)
+
+        # Set size and position FIRST
+        if self.obstacle_type == 'electric_wire':
+            self.size = (60, 20) # A small, dangerous segment
+            self.pos = (Window.width, random.randint(GROUND_LEVEL + 40, Window.height - 80))
+        elif self.obstacle_type == 'hole':
+            self.size = (80, GROUND_LEVEL) # Hole should cover the ground height
+            self.pos = (Window.width, 0)
+        elif self.obstacle_type == 'barrier':
+            self.size = (20, random.randint(80, 140))
+            self.pos = (Window.width, GROUND_LEVEL)
+        else: # Kite, Bird
+            self.size = (35, 30) # Standardized size for simplicity
+            self.pos = (Window.width, random.randint(GROUND_LEVEL + 40, Window.height - 80))
+            if obstacle_type == 'kite':
+                self.size = (30, 40)
+            elif obstacle_type == 'bird':
+                self.size = (35, 25)
+
+        # THEN call setup_obstacle() to draw the graphics at the correct initial position
         self.setup_obstacle()
-    
+        self.bind(pos=self.update_graphics)
+
     def setup_obstacle(self):
-        """Setup obstacle based on type"""
+        """Setup obstacle based on type using RELATIVE coordinates."""
         with self.canvas:
             if self.obstacle_type == 'electric_wire':
                 Color(1, 1, 0, 1)  # Yellow
-                self.size = (Window.width, 10)
-                self.pos = (Window.width, Window.height - 30)
-                self.shape = Rectangle(pos=self.pos, size=self.size)
-            
+                # Draw lines relative to the widget's bounding box
+                Line(points=[self.x, self.center_y, self.right, self.center_y], width=3)
+                # Draw "sparks" or posts
+                Line(points=[self.x, self.y, self.x, self.top], width=2)
+                Line(points=[self.right, self.y, self.right, self.top], width=2)
+
             elif self.obstacle_type == 'hole':
-                Color(0, 0, 0, 1)  # Black
-                self.size = (80, 60)
-                self.pos = (Window.width, 0)
-                self.shape = Rectangle(pos=self.pos, size=self.size)
-            
+                Color(0, 0, 0, 1)  # Black hole
+                # Use self.pos and self.size which are now correctly set
+                Rectangle(pos=self.pos, size=self.size)
+                # Add a brown border to make it look like a hole in the ground
+                Color(0.3, 0.2, 0.1, 1)
+                Line(points=[self.x, self.top, self.right, self.top], width=4)
+
+
             elif self.obstacle_type == 'kite':
-                Color(1, 0.5, 0, 1)  # Orange
-                self.size = (30, 30)
-                self.pos = (Window.width, random.randint(100, Window.height - 100))
-                self.shape = Ellipse(pos=self.pos, size=self.size)
-            
+                Color(1, 0.5, 0, 1)
+                points = [
+                    self.center_x, self.top,
+                    self.right, self.center_y,
+                    self.center_x, self.y,
+                    self.x, self.center_y
+                ]
+                Line(points=points + points[:2], width=2)
+                Color(1, 0, 0, 1)
+                tail_points = []
+                for i in range(5):
+                    tail_points.extend([self.center_x + random.randint(-5, 5), self.y - (i * 10)])
+                Line(points=tail_points, width=1)
+
             elif self.obstacle_type == 'barrier':
-                Color(0.5, 0.3, 0.1, 1)  # Brown
-                self.size = (20, random.randint(60, 120))
-                self.pos = (Window.width, random.randint(60, Window.height - self.height - 60))
-                self.shape = Rectangle(pos=self.pos, size=self.size)
-        
-        self.bind(pos=self.update_graphics)
-    
+                Color(0.5, 0.3, 0.1, 1)
+                Rectangle(pos=self.pos, size=self.size)
+                Color(0.3, 0.2, 0.05, 1)
+                for i in range(0, int(self.height), 15):
+                    Line(points=[self.x, self.y + i, self.right, self.y + i], width=1)
+
+            elif self.obstacle_type == 'bird':
+                Color(0.4, 0.4, 0.4, 1)
+                Ellipse(pos=self.pos, size=self.size)
+                Color(0.2, 0.2, 0.2, 1)
+                Line(points=[self.x + 5, self.center_y, self.x + 15, self.center_y + 8], width=2)
+                Line(points=[self.x + 20, self.center_y, self.right - 5, self.center_y + 8], width=2)
+
     def update_graphics(self, *args):
-        """Update obstacle graphics position"""
-        self.shape.pos = self.pos
-    
+        self.canvas.clear()
+        self.setup_obstacle()
+
     def update(self, dt, speed_multiplier=1.0):
-        """Update obstacle position"""
         self.x -= self.speed * speed_multiplier * dt
         return self.x < -self.width
-
+     
 class Collectible(Widget):
     """Collectible grass item"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.speed = 200
         self.size = (25, 25)
         self.pos = (Window.width, random.randint(80, Window.height - 80))
-        
-        with self.canvas:
-            Color(0, 1, 0, 1)  # Green
-            self.shape = Ellipse(pos=self.pos, size=self.size)
-        
+        self.size_hint = (None, None)
         self.bind(pos=self.update_graphics)
-    
+        self.update_graphics()
+
     def update_graphics(self, *args):
-        """Update collectible graphics position"""
-        self.shape.pos = self.pos
-    
+        self.canvas.clear()
+        with self.canvas:
+            Color(0, 0.8, 0, 1)
+            Ellipse(pos=self.pos, size=self.size)
+            Color(0, 0.6, 0, 1)
+            small_size = (8, 8)
+            Ellipse(pos=(self.x + 4, self.center_y + 4), size=small_size)
+            Ellipse(pos=(self.center_x + 4, self.y + 4), size=small_size)
+            Ellipse(pos=(self.center_x - 4, self.center_y + 4), size=small_size)
+            Ellipse(pos=(self.x + 4, self.center_y - 4), size=small_size)
+
     def update(self, dt, speed_multiplier=1.0):
-        """Update collectible position"""
         self.x -= self.speed * speed_multiplier * dt
         return self.x < -self.width
-
 class GameScreen(Screen):
     """Main game screen"""
     
@@ -154,6 +235,11 @@ class GameScreen(Screen):
             # Ground
             Color(0.2, 0.8, 0.2, 1)  # Green ground
             self.ground_rect = Rectangle(size=(Window.width, 60), pos=(0, 0))
+            
+            # Add some ground details
+            Color(0.15, 0.6, 0.15, 1)  # Darker green for grass lines
+            for i in range(0, Window.width, 20):
+                Line(points=[i, 50, i+10, 60], width=1)
         
         # Bind to update background
         self.bind(size=self.update_bg)
@@ -164,7 +250,7 @@ class GameScreen(Screen):
         
         # Lives display
         self.lives_label = Label(
-            text='❤️ ❤️ ❤️',
+            text='live live live',
             font_size='24sp',
             size_hint=(0.3, 1),
             halign='left'
@@ -184,7 +270,6 @@ class GameScreen(Screen):
         
         # Create cow
         self.cow = Cow()
-        self.cow.pos = (100, self.cow.ground_level)
         self.add_widget(self.cow)
         
         # Bind touch events
@@ -212,9 +297,10 @@ class GameScreen(Screen):
         self.spawn_timer = 0
         self.collectible_spawn_timer = 0
         
-        # Reset cow position
+        # Reset cow to ground and disable physics until first jump
+        self.cow.reset_to_ground()
         self.cow.pos = (100, self.cow.ground_level)
-        self.cow.velocity_y = 0
+        self.cow.game_started = False  # Reset game started state
         
         # Clear obstacles and collectibles
         for obstacle in self.obstacles:
@@ -249,12 +335,16 @@ class GameScreen(Screen):
         # Update cow
         self.cow.update(dt)
         
+        # Only spawn obstacles and update game elements after cow starts moving
+        if not self.cow.game_started:
+            return
+        
         # Update speed based on score
         self.speed_multiplier = 1.0 + (self.score // 50) * 0.2
         
         # Spawn obstacles
         self.spawn_timer += dt
-        if self.spawn_timer >= 2.0 / self.speed_multiplier:
+        if self.spawn_timer >= 5.0 / self.speed_multiplier:
             self.spawn_obstacle()
             self.spawn_timer = 0
         
@@ -282,10 +372,14 @@ class GameScreen(Screen):
     
     def spawn_obstacle(self):
         """Spawn a random obstacle"""
-        obstacle_types = ['electric_wire', 'hole', 'kite', 'barrier']
+        # CHANGED: Added 'electric_wire' to the main list
+        obstacle_types = ['hole', 'kite', 'barrier', 'bird', 'electric_wire']
         obstacle_type = random.choice(obstacle_types)
-        obstacle = Obstacle(obstacle_type)
+        
+        obstacle = Obstacle(obstacle_type=obstacle_type) # Pass type as keyword arg
+        
         self.obstacles.append(obstacle)
+        # FIXED: Removed the extra spawn and now add the single created obstacle
         self.add_widget(obstacle)
     
     def spawn_collectible(self):
@@ -297,27 +391,60 @@ class GameScreen(Screen):
     def check_collision(self, obstacle):
         """Check collision between cow and obstacle"""
         if self.cow.collide_widget(obstacle):
+            print('o no, cow hit an obstacle!')
+            self.cow.start_falling('hit')
             app = App.get_running_app()
             
             if obstacle.obstacle_type == 'electric_wire':
-                # Instant game over
+                # Instant game over for electric wire
                 if app and hasattr(app, 'sound_manager'):
                     app.sound_manager.play_sound('game_over')
                 self.game_over()
-            elif obstacle.obstacle_type == 'hole' and self.cow.y <= obstacle.y + obstacle.height:
-                # Fall into hole
-                if app and hasattr(app, 'sound_manager'):
-                    app.sound_manager.play_sound('hit')
-                self.lose_life()
-                self.remove_widget(obstacle)
-                self.obstacles.remove(obstacle)
+                return
+            
+            elif obstacle.obstacle_type == 'hole':
+                # Don't handle hole collision here - handled in cow physics
+                pass
+            
             else:
-                # Other obstacles
+                # Other obstacles cause cow to fall and lose life
                 if app and hasattr(app, 'sound_manager'):
                     app.sound_manager.play_sound('hit')
-                self.lose_life()
+                
+                # Make cow fall
+                self.cow.start_falling('hit')
+                
+                # Remove obstacle
                 self.remove_widget(obstacle)
                 self.obstacles.remove(obstacle)
+                
+                # Lose life after a short delay
+                Clock.schedule_once(lambda dt: self.lose_life(), 0.5)
+    
+    def lose_life(self):
+        """Lose a life"""
+        self.lives -= 1
+        self.update_ui()
+        
+        # Reset cow to ground
+        self.cow.reset_to_ground()
+        self.cow.pos = (100, self.cow.ground_level)
+        
+        if self.lives <= 0:
+            self.game_over()
+    
+    def is_cow_in_hole(self, cow):
+        """Check if cow is positioned over a hole"""
+        for obstacle in self.obstacles:
+            if obstacle.obstacle_type == 'hole':
+                hole_left = obstacle.x
+                hole_right = obstacle.right
+                cow_center = cow.center_x
+                
+                # Check if cow is over the hole
+                if hole_left <= cow_center <= hole_right:
+                    return True
+        return False
     
     def check_collectible_collision(self, collectible):
         """Check collision between cow and collectible"""
@@ -330,14 +457,6 @@ class GameScreen(Screen):
             self.update_ui()
             self.remove_widget(collectible)
             self.collectibles.remove(collectible)
-    
-    def lose_life(self):
-        """Lose a life"""
-        self.lives -= 1
-        self.update_ui()
-        
-        if self.lives <= 0:
-            self.game_over()
     
     def game_over(self):
         """Handle game over"""
@@ -365,14 +484,14 @@ class GameScreen(Screen):
         # Update score
         self.score_label.text = f'Score: {self.score}'
     
-    def on_touch_down(self, touch):
-        """Handle touch input"""
-        if self.game_running:
-            self.cow.jump()
-            app = App.get_running_app()
-            if app and hasattr(app, 'sound_manager'):
-                app.sound_manager.play_sound('fly')
-        return True
+    # def on_touch_down(self, touch):
+    #     """Handle touch input"""
+    #     if self.game_running:
+    #         self.cow.jump()
+    #         app = App.get_running_app()
+    #         if app and hasattr(app, 'sound_manager'):
+    #             app.sound_manager.play_sound('fly')
+    #     return True
     
     def on_space_press(self):
         """Handle space bar press"""
