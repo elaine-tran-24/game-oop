@@ -2,9 +2,9 @@
 Game Screen for When Cows Fly
 Main gameplay screen with cow, obstacles, and game logic
 """
-GRAVITY = 200
-JUMP_STRENGTH = 100
-GROUND_LEVEL = 60
+GRAVITY = 600
+JUMP_STRENGTH = 400
+GROUND_LEVEL = 100
 
 import random
 from kivy.uix.screenmanager import Screen
@@ -52,25 +52,26 @@ class Cow(Widget):
         self.velocity_y -= self.gravity * dt
         self.y += self.velocity_y * dt
 
-        # If we are already falling into a hole, let the cow fall off-screen
-        if self.is_falling and self.fall_reason == 'hole':
+        # Check if we are already falling into a hole
+        if self.is_falling and self.fall_reason == 'hole' and self.parent.is_cow_in_hole(self):
+
             # Check if cow is completely off-screen
-            if self.top < 0:
-                if self.parent: # Check if part of a screen
-                    self.parent.lose_life()
-                # No need to reset here, lose_life() will handle it.
-            return # Skip ground collision logic
+            if self.top >= 0:
+                self.x -= 200 * dt
 
-        # If NOT falling into a hole, check for ground collision
-        if self.y <= self.ground_level:
-            self.y = self.ground_level
-            self.velocity_y = 0
+            if self.top < 0 and self.parent.is_cow_pass_hole(self):
+                if self.parent:
+                    self.parent.lose_life()  # This should handle reset or life loss
+                return  # No further updates needed after off-screen
+            else:
+                return  # Continue falling; skip other checks
+        else:
+        # Not falling yet: apply gravity and check ground collision
+            if self.y <= self.ground_level:
+                self.y = self.ground_level
+                self.velocity_y = 0
 
-            # **FIXED: ADDED HOLE CHECK LOGIC HERE**
-            # Check if we are on the ground and over a hole
-            if self.parent and self.parent.is_cow_in_hole(self):
-                self.start_falling(reason='hole')
-
+        # Check if we are on the ground and over a hole
 
     def jump(self):
         """Make the cow jump (like Flappy Bird)"""
@@ -87,16 +88,18 @@ class Cow(Widget):
         # For 'hit' reason, we don't need special physics,
         # the gravity will take over. The lose_life() will reset the cow.
         if reason == 'hole':
+            
              # Give a slight downward push to ensure it falls
-            self.velocity_y = -50
-    
+            self.velocity_y = -300
+     
     def reset_to_ground(self):
+        self.x = 100
         self.y = self.ground_level
         self.velocity_y = 0
         self.is_falling = False
         self.fall_reason = None
 class Obstacle(Widget):
-    """Base obstacle class"""
+    """Base aclesacle class"""
 
     def __init__(self, obstacle_type, **kwargs):
         super().__init__(**kwargs)
@@ -106,8 +109,8 @@ class Obstacle(Widget):
 
         # Set size and position FIRST
         if self.obstacle_type == 'electric_wire':
-            self.size = (60, 20) # A small, dangerous segment
-            self.pos = (Window.width, random.randint(GROUND_LEVEL + 40, Window.height - 80))
+            self.size = (Window.width, 20) # A small, dangerous segment
+            self.pos = (0, Window.height -20)
         elif self.obstacle_type == 'hole':
             self.size = (80, GROUND_LEVEL) # Hole should cover the ground height
             self.pos = (Window.width, 0)
@@ -180,6 +183,8 @@ class Obstacle(Widget):
         self.setup_obstacle()
 
     def update(self, dt, speed_multiplier=1.0):
+        if self.obstacle_type == 'electric_wire':
+            return False
         self.x -= self.speed * speed_multiplier * dt
         return self.x < -self.width
      
@@ -234,12 +239,12 @@ class GameScreen(Screen):
             
             # Ground
             Color(0.2, 0.8, 0.2, 1)  # Green ground
-            self.ground_rect = Rectangle(size=(Window.width, 60), pos=(0, 0))
+            self.ground_rect = Rectangle(size=(Window.width, GROUND_LEVEL), pos=(0, 0))
             
             # Add some ground details
             Color(0.15, 0.6, 0.15, 1)  # Darker green for grass lines
             for i in range(0, Window.width, 20):
-                Line(points=[i, 50, i+10, 60], width=1)
+                Line(points=[i, 50, i+10,   GROUND_LEVEL], width=1)
         
         # Bind to update background
         self.bind(size=self.update_bg)
@@ -278,7 +283,7 @@ class GameScreen(Screen):
     def update_bg(self, *args):
         """Update background size"""
         self.bg_rect.size = Window.size
-        self.ground_rect.size = (Window.width, 60)
+        self.ground_rect.size = (Window.width, GROUND_LEVEL)
     
     def on_enter(self):
         """Called when entering the game screen"""
@@ -309,7 +314,8 @@ class GameScreen(Screen):
             self.remove_widget(collectible)
         self.obstacles.clear()
         self.collectibles.clear()
-        
+        self.spawn_obstacle('electric_wire')  # Start with a hole
+
         # Update UI
         self.update_ui()
         
@@ -370,29 +376,39 @@ class GameScreen(Screen):
             else:
                 self.check_collectible_collision(collectible)
     
-    def spawn_obstacle(self):
+    def spawn_obstacle(self, obstacle_type=None):
         """Spawn a random obstacle"""
         # CHANGED: Added 'electric_wire' to the main list
-        obstacle_types = ['hole', 'kite', 'barrier', 'bird', 'electric_wire']
-        obstacle_type = random.choice(obstacle_types)
+        if obstacle_type is None:
+            obstacle_types = ['hole', 'kite', 'barrier', 'bird', 'electric_wire']
+            obstacle_type = random.choice(obstacle_types)
         
         obstacle = Obstacle(obstacle_type=obstacle_type) # Pass type as keyword arg
         
         self.obstacles.append(obstacle)
         # FIXED: Removed the extra spawn and now add the single created obstacle
-        self.add_widget(obstacle)
-    
+        try:
+            cow_index = self.children.index(self.cow)
+            if obstacle.obstacle_type == 'hole':
+                self.add_widget(obstacle, index=cow_index + 1)
+            else:
+                self.add_widget(obstacle, index=cow_index)
+        except ValueError:
+            self.add_widget(obstacle)    
     def spawn_collectible(self):
         """Spawn a collectible grass"""
         collectible = Collectible()
         self.collectibles.append(collectible)
-        self.add_widget(collectible)
-    
+        try:
+            cow_index = self.children.index(self.cow)
+            self.add_widget(collectible, index=cow_index + 1)
+        except ValueError:
+            self.add_widget(collectible)    
     def check_collision(self, obstacle):
         """Check collision between cow and obstacle"""
         if self.cow.collide_widget(obstacle):
             print('o no, cow hit an obstacle!')
-            self.cow.start_falling('hit')
+            self.cow.start_falling(obstacle.obstacle_type)
             app = App.get_running_app()
             
             if obstacle.obstacle_type == 'electric_wire':
@@ -442,10 +458,24 @@ class GameScreen(Screen):
                 cow_center = cow.center_x
                 
                 # Check if cow is over the hole
-                if hole_left <= cow_center <= hole_right:
+                # if hole_left <= cow_center <= hole_right:
+                if cow_center >= (hole_left + hole_right) / 2:
                     return True
         return False
     
+    def is_cow_pass_hole(self, cow):
+        """Check if cow is positioned over a hole"""
+        for obstacle in self.obstacles:
+            if obstacle.obstacle_type == 'hole':
+                hole_left = obstacle.x
+                hole_right = obstacle.right
+                
+                # Check if cow is over the hole
+                # if hole_left <= cow_center <= hole_right:
+                if hole_right <= 100 * 0.8:
+                    return True
+        return False
+
     def check_collectible_collision(self, collectible):
         """Check collision between cow and collectible"""
         if self.cow.collide_widget(collectible):
@@ -478,7 +508,7 @@ class GameScreen(Screen):
     def update_ui(self):
         """Update UI elements"""
         # Update lives display
-        heart_text = '❤️ ' * self.lives + '🖤 ' * (3 - self.lives)
+        heart_text = 'L ' * self.lives + 'D ' * (3 - self.lives)
         self.lives_label.text = heart_text.strip()
         
         # Update score

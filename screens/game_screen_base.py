@@ -3,8 +3,8 @@ Game Screen for When Cows Fly
 Main gameplay screen with cow, obstacles, and game logic
 Fixed hole physics and obstacle behavior
 """
-GRAVITY = 200
-JUMP_STRENGTH = 100
+GRAVITY = 2.5
+JUMP_STRENGTH = 20
 GROUND_LEVEL = 60
 
 import random
